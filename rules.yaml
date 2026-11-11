@@ -1,0 +1,353 @@
+# 住宅平面初分类规则（种子）。不含具体项目句柄。
+# 由 classify.py 读取。用户在 Q 清单中的每次回答，应追加到 learned 或调整本文件，供下一张图自动套用。
+#
+# 匹配顺序：自上而下。confidence: high 一旦命中即采纳；若两条 high 指向不同类别 → 该实体进 Q。
+# 没有 high 时，收集 medium 候选：仅一个则采纳，多个则进 Q。
+# 全不匹配 → 未归类（合并时进「其他」）。
+#
+# 字段（均可选）：types, layers（子串，忽略大小写）, layer_of（见 layer_aliases）,
+# linetype_contains, colors（ACI 整数，256=BYLAYER）, block_keywords_of,
+# closed, min_thickness, max_thickness（闭合框较短边，毫米）,
+# min_area, max_area, min_extent, max_extent（包围盒较长边）,
+# circle_r_min, circle_r_max, not_types, not_layers, not_linetype_contains.
+#
+# shape: 与块名无关的通用几何阈值（毫米），由 classify.py 在规则匹配之后补判。
+# 高置信直接定类；中置信只给出 1–2 个候选并进 Q，供用户确认。
+
+version: 3
+
+categories:
+  - 墙体_保留
+  - 窗
+  - 墙体_门框
+  - 柜体
+  - 洁具
+  - 电器
+  - 门
+  - 家具
+  - 灯具
+  - 其他
+
+# 图层名别名：源 DWG 常见中文/英文/编号层
+layer_aliases:
+  墙体: ["墙", "I-110", "新建墙", "WALL", "A-WALL"]
+  拆墙: ["拆掉墙", "拆除", "DEMOLISH"]
+  窗: ["窗", "WINDOW", "窗台", "GLAZ", "A-GLAZ", "A-WIND"]
+  家具层: ["家具", "I-170", "FURN", "A-FURN"]
+  灯具: ["灯具", "I-151", "LAMP", "LIGHT", "A-LITE", "LITE"]
+  天花: ["天花", "I-150", "CEIL", "A-CLNG", "CLNG"]
+  管道: ["管道", "PIPE", "PLUMB", "给排", "A-PLMB"]
+  门: ["门", "DOOR", "A-DOOR"]
+  洁具层: ["洁具", "卫浴", "SANITARY", "SANI", "BATHFIT", "BATH-FIT", "BATH FITTING"]
+
+# 块名关键词（命中其中任一，忽略大小写）
+block_keywords:
+  家具: ["床", "沙发", "椅", "桌", "凳", "窗帘", "茶几", "地毯", "餐", "bed", "sofa", "chair", "table", "dining", "curtain", "stool", "rug"]
+  洁具: ["马桶", "坐便", "台盆", "洗手", "花洒", "淋浴", "浴缸", "地漏", "toilet", "sink", "basin", "shower", "tub", "wc"]
+  电器: ["冰箱", "洗衣机", "灶", "烟机", "电视", "空调", "燃气", "fridge", "washer", "stove", "oven", "hob", "cooktop", "gas", "tv", "ac-"]
+  灯具: ["灯", "lamp", "light", "downlight", "spot"]
+  门: ["门", "door"]
+  窗: ["窗", "window", "glaz", "chuang"]
+  柜体: ["柜", "wardrobe", "cabinet", "closet"]
+  排除: ["人", "person", "people", "figure", "man", "woman"]
+
+# 用户回答沉淀处：把「块名 xxx → 类别」或例外写在这里，下一张图优先匹配。
+# 例：
+# learned:
+#   blocks:
+#     - {name: "zb", category: 洁具, note: "马桶图块"}
+#   exceptions:
+#     - {handle: "……", category: 其他, note: "仅当必须针对单实体时才写句柄"}
+learned:
+  blocks: []
+  exceptions: []
+
+rules:
+  - id: exclude-dimension
+    action: exclude
+    confidence: high
+    reason: 尺寸标注不进入分类与合并
+    match: {types: [DIMENSION]}
+
+  - id: exclude-person-block
+    action: exclude
+    confidence: high
+    reason: 人物图块不进入合并
+    match: {types: [INSERT], block_keywords_of: 排除}
+
+  - id: learned-block
+    category: "${learned.block.category}"
+    confidence: high
+    reason: 用户已确认的块名归属
+    match: {learned_block: true}
+
+  - id: lighting-layer
+    category: 灯具
+    confidence: high
+    reason: 灯具专用图层上的实体
+    match: {layer_of: 灯具}
+
+  - id: window-layer
+    category: 窗
+    confidence: high
+    reason: 窗专用图层
+    match: {layer_of: 窗}
+
+  - id: door-iso10
+    category: 门
+    confidence: high
+    reason: 细密虚线（ISO10 等）多为门扇/五金
+    match: {linetype_contains: ["ISO10"]}
+
+  - id: window-yellow-on-wall
+    category: 窗
+    confidence: high
+    reason: 墙层上黄色（ACI 2）线段，常见为窗线
+    match: {layer_of: 墙体, types: [LINE, LWPOLYLINE, POLYLINE], colors: [2]}
+
+  - id: demolish-not-wall
+    category: 其他
+    confidence: high
+    reason: 拆除/拆砌墙不进入保留墙体
+    match: {layer_of: 拆墙}
+
+  - id: pipe-drain-circle
+    category: 洁具
+    confidence: high
+    reason: 管道层上的圆通常是地漏
+    match: {layer_of: 管道, types: [CIRCLE], circle_r_min: 25, circle_r_max: 200}
+
+  - id: pipe-run
+    category: 其他
+    confidence: high
+    reason: 管线路由本身不归入建筑/家具类，合并进「其他」
+    match: {layer_of: 管道, types: [LWPOLYLINE, POLYLINE, SPLINE]}
+
+  - id: new-wall-thickness
+    category: 墙体_保留
+    confidence: high
+    reason: 新建墙图层上、短边约一砖/隔墙厚度的闭合框
+    match:
+      layer_of: 墙体
+      layers: ["新建墙"]
+      types: [LWPOLYLINE, POLYLINE]
+      closed: true
+      min_thickness: 100
+      max_thickness: 280
+
+  - id: door-jamb-small-new-wall
+    category: 门
+    confidence: high
+    reason: 新建墙上短边明显小于墙厚的框或短肢，按独立门垛归门
+    match:
+      layers: ["新建墙"]
+      types: [LWPOLYLINE, POLYLINE]
+      max_thickness: 99
+      max_extent: 200
+
+  - id: ceiling-light-curve
+    category: 灯具
+    confidence: high
+    reason: 天花层上的椭圆/样条多为灯槽或灯位范围
+    match: {layer_of: 天花, types: [ELLIPSE, SPLINE]}
+
+  - id: dashed-opening-on-wall
+    category: 其他
+    confidence: high
+    reason: 墙层虚线多为洞口或拆砌，不进保留墙体
+    match: {layer_of: 墙体, linetype_contains: ["ISO03", "DASH", "HIDDEN"]}
+
+  - id: sanitary-iso02-circle
+    category: 洁具
+    confidence: high
+    reason: 家具层上的虚线圆常见于洁具（盆、下水）
+    match: {layer_of: 家具层, types: [CIRCLE], linetype_contains: ["ISO02"]}
+
+  - id: cabinet-dashed-panel
+    category: 柜体
+    confidence: medium
+    reason: 家具层上较大的虚线闭合框常见于柜内部分割/交叉线
+    match:
+      layer_of: 家具层
+      types: [LWPOLYLINE, POLYLINE]
+      closed: true
+      linetype_contains: ["ISO03"]
+      min_thickness: 330
+      max_area: 6000000
+
+  - id: large-dashed-rug
+    category: 家具
+    confidence: medium
+    reason: 特别大的虚线闭合框更像地毯范围
+    match:
+      layer_of: 家具层
+      types: [LWPOLYLINE, POLYLINE]
+      linetype_contains: ["ISO03"]
+      min_area: 6000000
+
+  - id: insert-furniture
+    category: 家具
+    confidence: high
+    reason: 块名含家具关键词
+    match: {types: [INSERT], block_keywords_of: 家具}
+
+  - id: insert-sanitary
+    category: 洁具
+    confidence: high
+    reason: 块名含洁具关键词
+    match: {types: [INSERT], block_keywords_of: 洁具}
+
+  - id: insert-appliance
+    category: 电器
+    confidence: high
+    reason: 块名含电器关键词
+    match: {types: [INSERT], block_keywords_of: 电器}
+
+  - id: insert-lighting
+    category: 灯具
+    confidence: high
+    reason: 块名含灯具关键词
+    match: {types: [INSERT], block_keywords_of: 灯具}
+
+  - id: insert-door
+    category: 门
+    confidence: high
+    reason: 块名含门关键词
+    match: {types: [INSERT], block_keywords_of: 门}
+
+  - id: insert-cabinet
+    category: 柜体
+    confidence: high
+    reason: 块名含柜体关键词
+    match: {types: [INSERT], block_keywords_of: 柜体}
+
+  - id: insert-window
+    category: 窗
+    confidence: high
+    reason: 块名含窗关键词（块名优先于所在图层）
+    match: {types: [INSERT], block_keywords_of: 窗}
+
+  - id: unknown-insert
+    action: question
+    confidence: medium
+    reason: 无法从块名判断的参照，需用户一次确认（同名块合并为一项 Q）
+    # 候选池；classify.py 按形状得分最多保留 2 个
+    candidates: [家具, 柜体, 洁具, 电器, 门, 灯具]
+    match: {types: [INSERT]}
+
+  - id: wall-solid-on-wall-layer
+    category: 墙体_保留
+    confidence: medium
+    reason: 墙图层上的实线线段/多段线，默认进墙体（洞口细部可能多收，审核墙体类时核对）
+    match:
+      layer_of: 墙体
+      not_layers: ["新建墙"]
+      types: [LINE, LWPOLYLINE, POLYLINE, ARC]
+      not_types: [TEXT, MTEXT, DIMENSION, INSERT, HATCH]
+      not_linetype_contains: ["ISO", "DASH", "HIDDEN"]
+    # 墙层上任意颜色的实线都收；虚线/文字/尺寸排除。黄窗线、拆除层已由前面高置信规则拿走。
+
+  - id: pipe-cross
+    category: 洁具
+    confidence: medium
+    reason: 管道层上的短直线常是地漏十字
+    match: {layer_of: 管道, types: [LINE], max_extent: 250}
+
+
+# ---------------------------------------------------------------------------
+# 形状识别阈值（住宅常见尺寸，通用表述，不含项目句柄或块名）
+# 图块按虚拟几何统计；炸开的线按种子（盆、柜框、灯位）再吸收紧邻构件。
+# ---------------------------------------------------------------------------
+shape:
+  insert:
+    person_min_splines: 10
+    person_spline_frac: 0.55
+    shower_min_tiny_circles: 20
+    shower_tiny_r_max: 8
+    shower_max_extent: 500
+    toilet_min_side: 350
+    toilet_max_side: 900
+    toilet_min_aspect: 1.25
+    toilet_max_aspect: 2.3
+    toilet_min_arcs: 8
+    toilet_max_circles: 8
+    toilet_max_hatch: 0
+    curtain_min_aspect: 6
+    curtain_max_thickness: 200
+    curtain_min_length: 600
+    curtain_min_arcs: 8
+    bed_min: 1500
+    bed_max: 2300
+    bed_min_ents: 20
+    sofa_min_long: 2400
+    sofa_max_long: 5000
+    sofa_min_short: 700
+    sofa_max_short: 2200
+    sofa_min_arcs: 15
+    chair_min: 400
+    chair_max: 1100
+    chair_max_aspect: 1.25
+    chair_min_arcs: 5
+    fridge_min_short: 500
+    fridge_max_short: 750
+    fridge_min_long: 1500
+    fridge_max_long: 2100
+    fridge_large_r: 80
+    cooktop_short: [300, 550]
+    cooktop_long: [550, 900]
+    cooktop_min_arcs: 20
+  basin:
+    min_short: 300
+    max_short: 700
+    min_long: 300
+    max_long: 900
+    min_bulges: 2
+    faucet_major: [15, 50]
+    faucet_minor: [8, 25]
+    faucet_max_dist: 160
+    drain_r: [15, 40]
+    grow_margin: 50
+  round_basin:
+    r: [150, 400]
+  cabinet:
+    depth: [300, 650]
+    min_length: 800
+    offset_inset: [8, 60]
+    x_corner_tol: 80
+    x_span_frac: 0.45
+    # 对象扩散：框内/贴边容差（毫米），以及沿柜长向的细实线（电视等）排除
+    spread_tol: 15
+    spread_tv_thick: 80
+    spread_tv_len_factor: 2.0
+    nearly_closed_gap: 30
+    # 床头柜（床侧方块）
+    nightstand_short: [400, 650]
+    nightstand_long: [400, 800]
+    nightstand_max_aspect: 1.8
+    nightstand_bed_gap: 300
+    # 较浅但有交叉线的柜
+    shallow_depth: [100, 320]
+    shallow_min_length: 400
+    # L 形柜体外沿（只定这条线，不向框内扩散）
+    l_path_min: 2500
+    l_min_short: 900
+    l_offset: [300, 650]
+  curtain_strip:
+    thickness: [40, 90]
+    min_length: 1500
+  drain_pair:
+    wall_r: [30, 90]
+    furniture_r: [15, 40]
+  downlight_pair:
+    r: [55, 160]
+    cross_len: [150, 400]
+    center_tol: 40
+  ceiling_light_frame:
+    min_area: 2000000
+    min_bulges: 2
+  table:
+    short: [700, 1200]
+    long: [1400, 2400]
+  ambiguous_panel:
+    depth: [330, 650]
+    min_length: 700

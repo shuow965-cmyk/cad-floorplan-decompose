@@ -1,0 +1,10 @@
+{
+  "name": "cad-floorplan-decompose",
+  "version": "0.1.0",
+  "private": true,
+  "description": "住宅平面 DWG/DXF 分类、审核与合并（试用版）",
+  "type": "module",
+  "dependencies": {
+    "@mlightcad/libredwg-web": ">=0.8.7"
+  }
+}
